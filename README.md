@@ -119,7 +119,7 @@ of a shot.
    it, so it continues the same paint instead of starting fresh.
 3. **Check every painting.** A painting whose shapes don't match the view is redrawn with a new seed, then dropped. A
    close-up H3 can't read is drawn again from further back, and only its middle is kept. That middle is enlarged, and
-   H3 adds the fine detail a close painting would have.
+   H3 adds the fine detail a close painting would have (`--sharpen`).
 4. **Hide the joins.** A later painting only fills in what the earlier ones lack, fades out towards its frame edge,
    and has its colour matched to the paint already there. The coverage report measures any visible join that is left.
 5. **Write the place.** It writes `DIR/<place>/paint.json` with every painting, depth map and camera. Then it reports
@@ -128,6 +128,13 @@ of a shot.
 
 Paintings are cached, so running it again only paints what changed. Other modes:
 
+- `--draft` paints every view small (1 megapixel, about a quarter of the time) so you can try notes, styles and
+  seeds quickly. When one looks right, `--final` with the same `--out` paints each view again at full size from its
+  draft. It keeps the draft's picture and colours and adds the full-size detail. Changing `--note`, `--style` or
+  `--seed` and running `--draft` again only repaints what changed.
+- `--sharpen dlss` sharpens close-ups with NVIDIA DLSS 5 instead of H3. Set `DLSS_URL` to a ComfyUI that has the
+  `RH_DLSS5Enhance` node (from RH-RunningHub/ComfyUI-RH-DLSS5, installed separately). It is quicker but adds much
+  less detail than H3, the default.
 - `--coverage` reports on an existing paint folder.
 - `--frames 0,40,90` paints chosen frames instead of planning.
 - `--style` changes the look H3 is asked for.

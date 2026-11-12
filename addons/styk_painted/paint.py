@@ -3,6 +3,8 @@
   python addons/styk_painted/paint.py --scene SCENE --out DIR --frames auto|0,30,100,272 [--size 864x1536]
       [--note "wire=a 1900s telegraph office;street=a house's porch at night"] [--mode plate|ratio] [--seed 42]
       [--colour 1.0] [--tone 0.5] [--style "..."] [--vae FILE] [--views-only | --keep-views] [--at-once]
+      [--draft] [--sharpen h3|dlss|none]
+  python addons/styk_painted/paint.py --scene SCENE --out DIR --final   # a --draft run painted again at full size
   python addons/styk_painted/paint.py --scene SCENE --out DIR --coverage [--every 10]   # what is bare or smeared
   python addons/styk_painted/paint.py --out DIR --retone [--mode ratio --tone 1 --colour 1]   # read again, no painting
 
@@ -52,10 +54,15 @@ Stack (STACK).
    check (up to ROUNDS times), and the coverage is reported. A dropped view (H3 could not read its close framing) is
    drawn again from PULLS further back and painted at PULL_MP; only the middle the close view sees is kept, as a
    narrower camera: enlarged to the plate's width and painted again by H3 with the detail a close painting would have
-   (zoom(), refine()).
+   (zoom(), refine(); --sharpen dlss sharpens it with NVIDIA DLSS 5 instead, faster but hardly crisper).
+7. --draft paints every view at DRAFT_MP (about a quarter of H3's time) with its close-ups only enlarged, to try notes,
+   styles and seeds; each try is cached like any painting. --final then paints each view of the draft in DIR again at
+   full size from its draft painting (REDRAW before its prompt), keeps it where its shapes agree REFINE_AGREE with the
+   draft (else the next seed, else the draft), and lays its fine detail on the draft's colour and light (detail()).
 """
 
 import argparse
+import atexit
 import hashlib
 import json
 import os
@@ -78,6 +85,12 @@ import godot  # noqa: E402
 COMFY_URL = os.environ.get("COMFY_URL", "")
 COMFY_WORKFLOW = os.environ.get("COMFY_WORKFLOW", os.path.join(HERE, "h3_edit_api.json"))
 STACK = os.environ.get("STACK") or getattr(godot, "STACK", None)
+# --sharpen dlss: NVIDIA DLSS 5 sharpens close-ups instead of H3, on a ComfyUI server with the RH_DLSS5Enhance node at
+# DLSS_URL, or the Model Stack engine godot.DLSS names (started for each close-up and stopped again, so it never holds
+# the GPU while H3 paints)
+_DLSS = getattr(godot, "DLSS", None) or {}
+DLSS_URL = os.environ.get("DLSS_URL") or _DLSS.get("url", "")
+DLSS_ENGINE = None if os.environ.get("DLSS_URL") else _DLSS.get("engine")
 LMAX = np.log(64.0)   # the ratio is kept within 1/64 .. 64
 CMAX = np.log(64.0)   # and its colour (each channel over its light) within 1/64 .. 64: H3 greys a saturated teal, whose
                       # red is near nothing, by twenty times its red
@@ -106,6 +119,11 @@ REFINE_PROMPT = ("Make this exact picture sharper and more detailed, as if paint
                  "removed. Where it is soft, paint the fine detail each surface would have up close: its grain, fibres, "
                  "pores, cracks, chips, stains and wear. Keep the same polished painted film look.")
                  # no place names: told what the place is, H3 paints the whole room again
+DRAFT_MP = 1.0  # --draft: megapixels each view is painted at (H3 about 11 s a view, against about 52 s at its default)
+REDRAW = ("Reproduce this exact picture at a higher resolution: every object, edge, colour, shadow and light exactly "
+          "where it is, nothing added, moved or removed. ")   # --final: before the view's own prompt (H3 keeps the
+          # composition with either, and is faster with the prompt than without)
+NOTE = "a room or street set"   # --note's default
 NEED = (0.4, 0.75)  # a later view's paint is kept where the earlier views give its spot under 0.4 of its own painting
                     # pixels and gives way to theirs over 0.75 (blending between), so a painting only adds what the
                     # earlier ones lack: where two meet, the set shows one paint, not a patch of each
@@ -200,24 +218,52 @@ def paint(view_png, prompt, seed, vae, cache, mp=None):
     return dest
 
 
-def comfy(view_png, prompt, seed, vae, mp, dest):
-    """paint through a ComfyUI server: COMFY_WORKFLOW (the H3 image edit template in API format) with {prompt} in its
-    prompt box, the view as its LoadImage, seed on every sampler, mp on its megapixel resize and vae on its VAELoader"""
+def upload(url, png):
+    """put png in a ComfyUI server's input folder; returns its name there"""
+    import urllib.request
+    import uuid
+    name = "styk-%s.png" % uuid.uuid4().hex[:12]
+    b = uuid.uuid4().hex
+    head = '--%s\r\nContent-Disposition: form-data; name="image"; filename="%s"\r\nContent-Type: image/png\r\n\r\n'
+    body = (head % (b, name)).encode() + open(png, "rb").read() + ("\r\n--%s--\r\n" % b).encode()
+    req = urllib.request.Request(url + "/upload/image", body, {"Content-Type": "multipart/form-data; boundary=" + b})
+    return json.load(urllib.request.urlopen(req, timeout=120))["name"]
+
+
+def run_graph(url, wf, what):
+    """run an API-format workflow on a ComfyUI server; returns its first output image's bytes"""
     import time
     import urllib.parse
     import urllib.request
     import uuid
+    req = urllib.request.Request(url + "/prompt", json.dumps({"prompt": wf, "client_id": uuid.uuid4().hex}).encode(),
+                                 {"Content-Type": "application/json"})
+    pid = json.load(urllib.request.urlopen(req, timeout=120))["prompt_id"]
+    for _ in range(3600):
+        hist = json.load(urllib.request.urlopen("%s/history/%s" % (url, pid), timeout=60))
+        if pid in hist:
+            break
+        time.sleep(1.0)
+    else:
+        sys.exit("ComfyUI did not finish %s" % what)
+    for out in hist[pid].get("outputs", {}).values():
+        for im in out.get("images", []):
+            if im.get("type") == "output":
+                q = urllib.parse.urlencode({"filename": im["filename"], "subfolder": im.get("subfolder", ""),
+                                            "type": "output"})
+                return urllib.request.urlopen("%s/view?%s" % (url, q), timeout=120).read()
+    sys.exit("ComfyUI made nothing for %s: %s" % (what, json.dumps(hist[pid].get("status", {}))[:500]))
+
+
+def comfy(view_png, prompt, seed, vae, mp, dest):
+    """paint through a ComfyUI server: COMFY_WORKFLOW (the H3 image edit template in API format) with {prompt} in its
+    prompt box, the view as its LoadImage, seed on every sampler, mp on its megapixel resize and vae on its VAELoader"""
     url = COMFY_URL.rstrip("/")
     if not os.path.exists(COMFY_WORKFLOW):
         sys.exit("no ComfyUI workflow at %s (COMFY_WORKFLOW): export the MiniMax H3 image edit template in API format"
                  % COMFY_WORKFLOW)
     wf = json.load(open(COMFY_WORKFLOW, encoding="utf-8"))
-    name = "styk-%s.png" % uuid.uuid4().hex[:12]
-    b = uuid.uuid4().hex
-    head = '--%s\r\nContent-Disposition: form-data; name="image"; filename="%s"\r\nContent-Type: image/png\r\n\r\n'
-    body = (head % (b, name)).encode() + open(view_png, "rb").read() + ("\r\n--%s--\r\n" % b).encode()
-    req = urllib.request.Request(url + "/upload/image", body, {"Content-Type": "multipart/form-data; boundary=" + b})
-    name = json.load(urllib.request.urlopen(req, timeout=120))["name"]
+    name = upload(url, view_png)
     said = False
     for node in wf.values():
         ins = node.get("inputs", {})
@@ -236,25 +282,66 @@ def comfy(view_png, prompt, seed, vae, mp, dest):
             ins["vae_name"] = vae
     if not said:
         sys.exit("%s has no {prompt} in its prompt box" % COMFY_WORKFLOW)
-    req = urllib.request.Request(url + "/prompt", json.dumps({"prompt": wf, "client_id": uuid.uuid4().hex}).encode(),
-                                 {"Content-Type": "application/json"})
-    pid = json.load(urllib.request.urlopen(req, timeout=120))["prompt_id"]
-    for _ in range(3600):
-        hist = json.load(urllib.request.urlopen("%s/history/%s" % (url, pid), timeout=60))
-        if pid in hist:
-            break
-        time.sleep(1.0)
-    else:
-        sys.exit("ComfyUI did not finish painting %s" % view_png)
-    for out in hist[pid].get("outputs", {}).values():
-        for im in out.get("images", []):
-            if im.get("type") == "output":
-                q = urllib.parse.urlencode({"filename": im["filename"], "subfolder": im.get("subfolder", ""),
-                                            "type": "output"})
-                with open(dest, "wb") as f:
-                    f.write(urllib.request.urlopen("%s/view?%s" % (url, q), timeout=120).read())
-                return
-    sys.exit("ComfyUI painted nothing for %s: %s" % (view_png, json.dumps(hist[pid].get("status", {}))[:500]))
+    with open(dest, "wb") as f:
+        f.write(run_graph(url, wf, "painting " + view_png))
+
+
+_dlss_state = None   # None: not checked yet; "up": it was running already; "started": this run started it
+
+
+def dlss_up():
+    """make sure the DLSS server answers, starting the stack's engine if one is named (stopped again at exit)"""
+    global _dlss_state
+    import urllib.request
+    if _dlss_state:
+        return
+    try:
+        urllib.request.urlopen(DLSS_URL.rstrip("/") + "/system_stats", timeout=3)
+        _dlss_state = "up"
+        return
+    except OSError:
+        if not (DLSS_ENGINE and STACK):
+            sys.exit("no DLSS server at %s (DLSS_URL); --sharpen h3 sharpens with H3 instead" % DLSS_URL)
+    lock = [sys.executable, godot.GPU_RUN] if getattr(godot, "GPU_RUN", None) else []
+    subprocess.run([*lock, sys.executable, "run.py", "start", DLSS_ENGINE], cwd=STACK, check=True,
+                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+    _dlss_state = "started"
+    atexit.register(dlss_down)
+
+
+def dlss_down():
+    """stop the DLSS engine if this run started it, so it never holds the GPU while H3 paints"""
+    global _dlss_state
+    if _dlss_state == "started":
+        subprocess.run([sys.executable, "run.py", "stop", DLSS_ENGINE], cwd=STACK, stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL)
+        _dlss_state = None
+
+
+def dlss(img, cache):
+    """img (BGR) twice as large, sharpened by NVIDIA DLSS 5 (RH_DLSS5Enhance, 2x Performance), cached by its pixels"""
+    h = hashlib.sha1(img.tobytes())
+    h.update(("%s dlss2x" % (img.shape,)).encode())
+    dest = os.path.join(cache, "dlss-" + h.hexdigest()[:16] + ".png")
+    if not os.path.exists(dest):
+        dlss_up()
+        src = dest + ".in.png"
+        cv2.imwrite(src, img)
+        url = DLSS_URL.rstrip("/")
+        wf = {"1": {"class_type": "LoadImage", "inputs": {"image": upload(url, src)}},
+              "2": {"class_type": "RH_DLSS5Enhance", "inputs": {
+                  "image": ["1", 0], "upscaling_mode": "2x (Performance)", "style": "default", "preset": 0,
+                  "intensity": 1, "tone": 1, "structure": 1.5, "skin": 1, "auto_mask": "off", "motion": "auto",
+                  "scene_change_threshold": 0.24, "batch_mode": "temporal sequence", "warmup_frames": 1,
+                  "keep_audio": "on", "backend": "auto", "channel_order": "auto", "hdr": "off", "global_tone": -1,
+                  "detail": 1, "color": 1, "runtime_dir": "", "wine_prefix": ""}},
+              "3": {"class_type": "SaveImage", "inputs": {"images": ["2", 0], "filename_prefix": "styk-dlss"}}}
+        data = run_graph(url, wf, "DLSS")
+        dlss_down()   # started for this close-up: about 25 s to start again, against 70 s for H3's sharpening
+        os.remove(src)
+        with open(dest, "wb") as f:
+            f.write(data)
+    return cv2.imread(dest)
 
 
 def lin(img8):
@@ -428,18 +515,30 @@ def footprint(depth, pull):
 
 
 def refine(pdir, name, pt, k, depth, a, cache):
-    """the middle k of painting pt at the plate's width: enlarged, and then painted again by H3 at that size with the
-    detail a painting from this close would have (StableGen's refine pass: the same picture, sharper). A redrawing
-    whose shapes moved (agreement() with the enlargement under REFINE_AGREE) is tried with the next seed, and after
-    TRIES the plain enlargement is kept. Returns the painting's path (the enlargement is NAME.crop.png)."""
+    """the middle k of painting pt at the plate's width: enlarged, and sharpened as --sharpen says. dlss: NVIDIA DLSS 5
+    doubles the middle (about a second once running; it sharpens what is there). h3: H3 paints the enlargement again
+    with the detail a painting from this close would have (StableGen's refine pass: about 70 s, new grain and wear); a
+    redrawing whose shapes moved (agreement() with the enlargement under REFINE_AGREE) is tried with the next seed,
+    and after TRIES the plain enlargement is kept. Either way only its detail finer than DETAIL_BLUR is kept, on the
+    enlargement's colour and light. none: the enlargement. Returns the painting's path (the enlargement is
+    NAME.crop.png)."""
     c = crop(pt, k)
     up = c.shape[1] < PLATE[0]
     big = cv2.resize(c, (PLATE[0], round(PLATE[0] * c.shape[0] / c.shape[1])),
                      interpolation=cv2.INTER_LANCZOS4 if up else cv2.INTER_AREA)
     src = os.path.join(pdir, name + ".crop.png")
     cv2.imwrite(src, big)
-    if not up:
+    if not up or a.sharpen == "none":
         return src
+    kept = os.path.join(pdir, name + ".refined.png")
+    if a.sharpen == "dlss":
+        d = dlss(c, cache)
+        d = cv2.resize(d, (big.shape[1], big.shape[0]),
+                       interpolation=cv2.INTER_AREA if d.shape[1] >= big.shape[1] else cv2.INTER_LANCZOS4)
+        cv2.imwrite(kept, detail(d, big))
+        print("%s: its middle (%.2f) enlarged %.1f times and sharpened by DLSS" % (name, k, PLATE[0] / c.shape[1]),
+              flush=True)
+        return kept
     small = cv2.resize(big, (depth.shape[1], depth.shape[0]), interpolation=cv2.INTER_AREA)
     for t in range(TRIES):
         out = paint(src, REFINE_PROMPT, a.seed + t, a.vae, cache)
@@ -447,7 +546,6 @@ def refine(pdir, name, pt, k, depth, a, cache):
         if agree >= REFINE_AGREE:
             print("%s: its middle (%.2f) enlarged %.1f times and redrawn sharper, shapes agree %.2f" % (
                 name, k, PLATE[0] / c.shape[1], agree), flush=True)
-            kept = os.path.join(pdir, name + ".refined.png")
             cv2.imwrite(kept, detail(cv2.imread(out), big))
             return kept
         print("%s: seed %d's sharper redrawing moved things (shapes agree %.2f), %s" % (
@@ -536,7 +634,7 @@ def keep(pdir, name, vdir, v, bare, guide, pt, depth, a, want=None):
 def write_place(out, env, note, a, entries):
     with open(os.path.join(out, env, "paint.json"), "w", encoding="utf-8") as f:
         json.dump({"note": note, "mode": a.mode, "seed": a.seed, "colour": a.colour, "tone": a.tone, "style": a.style,
-                   "vae": a.vae, "views": entries}, f, indent=1)
+                   "vae": a.vae, "draft": a.draft, "views": entries}, f, indent=1)
 
 
 def retone(out, a):
@@ -872,7 +970,7 @@ def paint_views(a, out, vdir, vs, places):
     """paint the bare views vs (drawn into vdir) one after another, onto the places' paintings so far (places: env ->
     paint.json entries). Returns (places, the names of the views painted, the views dropped)."""
     said = notes(a.note)
-    note = lambda env: said.get(env, said.get("", "a room or street set"))
+    note = lambda env: said.get(env, said.get("", NOTE))
     cache = os.path.join(out, "painted")
     os.makedirs(cache, exist_ok=True)
     made, dropped = [], []
@@ -897,8 +995,29 @@ def paint_views(a, out, vdir, vs, places):
         prompt = PROMPT.format(note=note(env), style=a.style, carry=carry)
         depth = cv2.imread(os.path.join(vdir, v["depth"]), cv2.IMREAD_UNCHANGED)
         bare = cv2.imread(png)
+        mp = DRAFT_MP if a.draft else PULL_MP if v.get("pull") else None
+        draft = a.drafts.get(name)
+        if draft:   # --final: the draft's painting painted again at full size, as the draft drew it
+            prompt = REDRAW + PROMPT.format(note=note(env), style=a.style, carry="")
+            dr = cv2.resize(cv2.imread(draft), (depth.shape[1], depth.shape[0]), interpolation=cv2.INTER_AREA)
         for t in range(TRIES):
-            painted = paint(guide, prompt, a.seed + t, a.vae, cache, PULL_MP if v.get("pull") else None)
+            painted = paint(draft or guide, prompt, a.seed + t, a.vae, cache, mp)
+            if draft:
+                agree = agreement(dr, cv2.imread(painted), depth)
+                if agree >= REFINE_AGREE:   # its fine detail on the draft's colour and light, which were chosen
+                    full = cv2.imread(painted)
+                    painted = os.path.join(pdir, name + ".final.png")
+                    cv2.imwrite(painted, detail(full, cv2.imread(draft)))
+                    print("%s %s: painted again at full size, shapes agree %.2f with the draft" % (env, name, agree),
+                          flush=True)
+                    break
+                print("%s %s: seed %d's full-size painting moved things (shapes agree %.2f with the draft), %s" % (
+                    env, name, a.seed + t, agree, "trying the next seed" if t + 1 < TRIES else "the draft kept"),
+                    flush=True)
+                if t + 1 == TRIES:
+                    painted = draft
+                    break
+                continue
             agree = agreement(bare, cv2.imread(painted), depth)
             if carry:   # a close view of a flat surface has next to no shapes of its own to keep; the paint carried
                 # onto its guide does, and a painting that drew another picture keeps neither
@@ -909,7 +1028,7 @@ def paint_views(a, out, vdir, vs, places):
                 env, name, a.seed + t, agree, "trying the next seed" if t + 1 < TRIES else "view dropped"), flush=True)
         else:
             for ext in (".ratio.exr", ".plate.png", ".light.exr", ".depth.exr", ".aligned.jpg", ".guide.png",
-                        ".crop.png", ".refined.png", ".matched.png", ".need.png"):   # nothing of an earlier run's
+                        ".crop.png", ".refined.png", ".matched.png", ".need.png", ".final.png"):   # nothing of an earlier run's
                 if os.path.exists(os.path.join(pdir, name + ext)):
                     os.remove(os.path.join(pdir, name + ext))
             shutil.rmtree(os.path.join(pdir, name + ".zoom"), ignore_errors=True)
@@ -920,7 +1039,9 @@ def paint_views(a, out, vdir, vs, places):
             kv, kd, g, shown, extra = zoom(a, pdir, name, v, depth, g, cv2.imread(painted), cache)
             bare = cv2.imread(os.path.join(kd, kv["image"]))
             depth = cv2.imread(os.path.join(kd, kv["depth"]), cv2.IMREAD_UNCHANGED)
-            extra["painted"] = os.path.relpath(painted, pdir)
+        extra["painted"] = os.path.relpath(painted, pdir)   # H3's whole painting, which --final paints again
+        if draft:
+            extra["draft"] = os.path.relpath(draft, pdir)
         # only where the earlier paintings are too soft for this view does its own paint weigh in, and its broad
         # colour is the earlier paint's where that shows on its guide: where they meet, one paint
         want, seen = need(cams_of(pdir, places.get(env, [])), kv, depth)
@@ -989,13 +1110,47 @@ def auto(a, out):
         vdir, vs = draw(a, out, picks)
         places, made, dropped = paint_views(a, out, vdir, vs, places)
         for env, entries in places.items():   # the next plan judges what is painted now
-            write_place(out, env, said.get(env, said.get("", "a room or street set")), a, entries)
+            write_place(out, env, said.get(env, said.get("", NOTE)), a, entries)
         have += made
         skip |= {vname(v): v for v in dropped}
         print("round %d: painted %s, dropped %s" % (r + 1, made or "none", [vname(v) for v in dropped] or "none"),
               flush=True)
     shutil.rmtree(os.path.join(out, "pre"), ignore_errors=True)
     print("painted %s into %s from views %s" % (", ".join(places), out, have), flush=True)
+    coverage(out, a.scene, a.every, a.size)
+
+
+def final(a, out):
+    """--final: every view a --draft run painted into out, in the same order, painted again at full size from its
+    draft painting (REDRAW), then joined, matched and sharpened as any painting; then the coverage report. Its own
+    note and style are the draft's unless --note or --style says otherwise; run again, it paints the same drafts."""
+    said, order = {}, []
+    for env in sorted(os.listdir(out)):
+        pj = os.path.join(out, env, "paint.json")
+        if not os.path.exists(pj):
+            continue
+        place = json.load(open(pj, encoding="utf-8"))
+        for e in place["views"]:
+            src = e.get("painted") if place.get("draft") else e.get("draft")
+            if not src:
+                sys.exit("%s was not painted with --draft: nothing to paint again" % pj)
+            a.drafts[vname(e)] = os.path.normpath(os.path.join(out, env, src))
+            order.append(vname(e))
+        said[env] = place.get("note", NOTE)
+        if a.style == STYLE and place.get("style"):
+            a.style = place["style"]
+    if not order:
+        sys.exit("no draft in %s: paint one with --draft first" % out)
+    if a.note == NOTE:
+        a.note = ";".join("%s=%s" % kv for kv in said.items())
+    vdir = os.path.join(out, "views")
+    vs = {vname(v): v for v in json.load(open(os.path.join(vdir, "views.json"), encoding="utf-8"))["views"]}
+    places, made, _ = paint_views(a, out, vdir, [vs[n] for n in order], {})
+    said = notes(a.note)
+    for env, entries in places.items():
+        write_place(out, env, said.get(env, said.get("", NOTE)), a, entries)
+    shutil.rmtree(os.path.join(out, "pre"), ignore_errors=True)
+    print("painted %s again at full size from the draft: %s" % (", ".join(places), made), flush=True)
     coverage(out, a.scene, a.every, a.size)
 
 
@@ -1026,7 +1181,7 @@ def main():
     ap.add_argument("--frames", help="the frames to paint from, as film.gd --frames (the first is painted first), or "
                                      "auto: chosen from what the film shows")
     ap.add_argument("--size", default="864x1536")
-    ap.add_argument("--note", default="a room or street set",
+    ap.add_argument("--note", default=NOTE,
                     help='what the place is, for the painter: one note for every place, or "wire=...;street=..." '
                          'with one per place (a place not named takes the default)')
     ap.add_argument("--style", default=STYLE, help="the look every surface is repainted in")
@@ -1046,11 +1201,29 @@ def main():
                     help="report how much of the film's set the paintings in DIR cover, frame by frame, and paint nothing")
     ap.add_argument("--every", type=int, default=10, help="--coverage and --frames auto: judge every this many frames")
     ap.add_argument("--keep-views", action="store_true", help="reuse DIR/views as drawn last time")
+    ap.add_argument("--draft", action="store_true",
+                    help="paint every view small (DRAFT_MP, about 11 s each, close-ups unsharpened) to try notes, "
+                         "styles and seeds quickly; --final then paints the draft you keep again at full size")
+    ap.add_argument("--final", action="store_true",
+                    help="paint the --draft run in DIR again at full size, view by view, keeping what each draft drew")
+    ap.add_argument("--sharpen", choices=("h3", "dlss", "none"), default="h3",
+                    help="how a close-up's enlarged middle is sharpened: h3 (H3 paints in real grain, cracks and wear, "
+                         "about 70 s; the default), dlss (NVIDIA DLSS 5 through DLSS_URL, about 30 s with its start: "
+                         "only a little crisper than the enlargement), none")
     ap.add_argument("--retone", action="store_true",
                     help="read the paintings already in DIR again at --colour and --tone, painting nothing")
     a = ap.parse_args()
 
     out = os.path.abspath(a.out)
+    a.drafts = {}
+    if a.draft:
+        a.sharpen = "none"   # a draft is a quick look: its close-ups are only enlarged
+    if a.draft and a.final:
+        ap.error("--draft paints the small views and --final paints them again: one at a time")
+    if a.final:
+        if not a.scene:
+            ap.error("--final needs --scene")
+        return final(a, out)
     if a.retone:
         return retone(out, a)
     if a.coverage:
@@ -1073,7 +1246,7 @@ def main():
         vs = sorted((v for v in vs if v["frame"] in want), key=lambda v: want.index(v["frame"]))
     places, _, _ = paint_views(a, out, vdir, vs, {})
     said = notes(a.note)
-    note = lambda env: said.get(env, said.get("", "a room or street set"))
+    note = lambda env: said.get(env, said.get("", NOTE))
     for env, entries in places.items():
         write_place(out, env, note(env), a, entries)
     shutil.rmtree(os.path.join(out, "pre"), ignore_errors=True)
