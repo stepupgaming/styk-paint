@@ -1,0 +1,317 @@
+[gd_scene load_steps=44 format=3]
+
+[ext_resource type="Script" path="res://demo/room.gd" id="1_room"]
+
+[sub_resource type="StandardMaterial3D" id="M0"]
+albedo_color = Color(0.55, 0.38, 0.24, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="B0"]
+material = SubResource("M0")
+size = Vector3(6, 0.1, 4.5)
+
+[sub_resource type="StandardMaterial3D" id="M1"]
+albedo_color = Color(0.78, 0.72, 0.58, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="B1"]
+material = SubResource("M1")
+size = Vector3(6, 2.8, 0.1)
+
+[sub_resource type="StandardMaterial3D" id="M2"]
+albedo_color = Color(0.7, 0.66, 0.55, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="B2"]
+material = SubResource("M2")
+size = Vector3(0.1, 2.8, 4.5)
+
+[sub_resource type="StandardMaterial3D" id="M3"]
+albedo_color = Color(0.7, 0.66, 0.55, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="B3"]
+material = SubResource("M3")
+size = Vector3(0.1, 2.8, 4.5)
+
+[sub_resource type="StandardMaterial3D" id="M4"]
+albedo_color = Color(0.35, 0.22, 0.14, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="B4"]
+material = SubResource("M4")
+size = Vector3(6, 0.12, 0.04)
+
+[sub_resource type="StandardMaterial3D" id="M5"]
+albedo_color = Color(0.62, 0.18, 0.16, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="B5"]
+material = SubResource("M5")
+size = Vector3(2.4, 0.02, 1.6)
+
+[sub_resource type="StandardMaterial3D" id="M6"]
+albedo_color = Color(0.45, 0.28, 0.16, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="B6"]
+material = SubResource("M6")
+size = Vector3(1.4, 0.06, 0.8)
+
+[sub_resource type="StandardMaterial3D" id="M7"]
+albedo_color = Color(0.4, 0.25, 0.14, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="B7"]
+material = SubResource("M7")
+size = Vector3(0.06, 0.72, 0.06)
+
+[sub_resource type="StandardMaterial3D" id="M8"]
+albedo_color = Color(0.4, 0.25, 0.14, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="B8"]
+material = SubResource("M8")
+size = Vector3(0.06, 0.72, 0.06)
+
+[sub_resource type="StandardMaterial3D" id="M9"]
+albedo_color = Color(0.4, 0.25, 0.14, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="B9"]
+material = SubResource("M9")
+size = Vector3(0.06, 0.72, 0.06)
+
+[sub_resource type="StandardMaterial3D" id="M10"]
+albedo_color = Color(0.4, 0.25, 0.14, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="B10"]
+material = SubResource("M10")
+size = Vector3(0.06, 0.72, 0.06)
+
+[sub_resource type="StandardMaterial3D" id="M11"]
+albedo_color = Color(0.42, 0.27, 0.15, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="B11"]
+material = SubResource("M11")
+size = Vector3(1.6, 1.9, 0.35)
+
+[sub_resource type="StandardMaterial3D" id="M12"]
+albedo_color = Color(0.2, 0.32, 0.55, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="B12"]
+material = SubResource("M12")
+size = Vector3(0.7, 0.28, 0.25)
+
+[sub_resource type="StandardMaterial3D" id="M13"]
+albedo_color = Color(0.55, 0.45, 0.2, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="B13"]
+material = SubResource("M13")
+size = Vector3(0.6, 0.28, 0.25)
+
+[sub_resource type="StandardMaterial3D" id="M14"]
+albedo_color = Color(0.3, 0.45, 0.28, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="B14"]
+material = SubResource("M14")
+size = Vector3(0.9, 0.28, 0.25)
+
+[sub_resource type="StandardMaterial3D" id="M15"]
+albedo_color = Color(0.33, 0.4, 0.42, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="B15"]
+material = SubResource("M15")
+size = Vector3(0.6, 1.1, 0.5)
+
+[sub_resource type="StandardMaterial3D" id="M16"]
+albedo_color = Color(0.68, 0.55, 0.36, 1)
+roughness = 0.9
+
+[sub_resource type="BoxMesh" id="B16"]
+material = SubResource("M16")
+size = Vector3(0.4, 0.3, 0.4)
+
+[sub_resource type="StandardMaterial3D" id="MPic"]
+albedo_color = Color(0.95, 0.85, 0.35, 1)
+
+[sub_resource type="BoxMesh" id="BPic"]
+material = SubResource("MPic")
+size = Vector3(0.9, 0.6, 0.03)
+
+[sub_resource type="StandardMaterial3D" id="MLamp"]
+albedo_color = Color(1, 0.9, 0.6, 1)
+emission_enabled = true
+emission = Color(1, 0.85, 0.5, 1)
+emission_energy_multiplier = 2.0
+
+[sub_resource type="SphereMesh" id="SLamp"]
+material = SubResource("MLamp")
+radius = 0.12
+height = 0.24
+
+[sub_resource type="StandardMaterial3D" id="MBody"]
+albedo_color = Color(0.25, 0.45, 0.75, 1)
+
+[sub_resource type="CapsuleMesh" id="CBody"]
+material = SubResource("MBody")
+radius = 0.22
+height = 1.4
+
+[sub_resource type="StandardMaterial3D" id="MHead"]
+albedo_color = Color(0.95, 0.78, 0.62, 1)
+
+[sub_resource type="SphereMesh" id="SHead"]
+material = SubResource("MHead")
+radius = 1.0
+height = 2.0
+
+[sub_resource type="Animation" id="AWalk"]
+resource_name = "walk"
+length = 5.0
+tracks/0/type = "value"
+tracks/0/imported = false
+tracks/0/enabled = true
+tracks/0/path = NodePath("Guy:position")
+tracks/0/interp = 1
+tracks/0/loop_wrap = true
+tracks/0/keys = {
+"times": PackedFloat32Array(0, 1.2),
+"transitions": PackedFloat32Array(1, 1),
+"update": 0,
+"values": [Vector3(-1.2, 0, 0.6), Vector3(-0.4, 0, 0.6)]
+}
+
+[sub_resource type="AnimationLibrary" id="Lib"]
+_data = {
+&"walk": SubResource("AWalk")
+}
+
+[sub_resource type="Environment" id="Env"]
+background_mode = 1
+background_color = Color(0.05, 0.06, 0.08, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.55, 0.6, 0.7, 1)
+ambient_light_energy = 0.6
+tonemap_mode = 0
+
+[node name="Room" type="Node3D"]
+script = ExtResource("1_room")
+
+[node name="Floor" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.05, 0.75)
+mesh = SubResource("B0")
+
+[node name="BackWall" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.4, -1.5)
+mesh = SubResource("B1")
+
+[node name="LeftWall" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 1.4, 0.75)
+mesh = SubResource("B2")
+
+[node name="RightWall" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1.4, 0.75)
+mesh = SubResource("B3")
+
+[node name="Skirting" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.06, -1.43)
+mesh = SubResource("B4")
+
+[node name="Rug" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.2, 0.01, 0.4)
+mesh = SubResource("B5")
+
+[node name="TableTop" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.6, 0.75, 0.2)
+mesh = SubResource("B6")
+
+[node name="TableLeg1" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0.36, -0.12)
+mesh = SubResource("B7")
+
+[node name="TableLeg2" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.2, 0.36, -0.12)
+mesh = SubResource("B8")
+
+[node name="TableLeg3" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1, 0.36, 0.52)
+mesh = SubResource("B9")
+
+[node name="TableLeg4" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.2, 0.36, 0.52)
+mesh = SubResource("B10")
+
+[node name="Shelf" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.8, 0.95, -1.27)
+mesh = SubResource("B11")
+
+[node name="Books1" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.1, 1.33, -1.2)
+mesh = SubResource("B12")
+
+[node name="Books2" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.5, 0.78, -1.2)
+mesh = SubResource("B13")
+
+[node name="Books3" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.8, 0.23, -1.2)
+mesh = SubResource("B14")
+
+[node name="Cabinet" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.55, 0.55, -1.15)
+mesh = SubResource("B15")
+
+[node name="Box" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.5, 0.15, 0.6)
+mesh = SubResource("B16")
+
+[node name="Picture" type="MeshInstance3D" parent="." groups=["paint_keep"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.6, 1.6, -1.43)
+mesh = SubResource("BPic")
+
+[node name="Lamp" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.9, 0.9, 0.1)
+mesh = SubResource("SLamp")
+
+[node name="LampLight" type="OmniLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.9, 1.05, 0.1)
+light_color = Color(1, 0.85, 0.55, 1)
+light_energy = 1.5
+shadow_enabled = true
+omni_range = 4.0
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+position = Vector3(0, 4, 2)
+rotation_degrees = Vector3(-55, 25, 0)
+light_energy = 1.2
+shadow_enabled = true
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Env")
+
+[node name="Camera" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.4, 5)
+
+[node name="Guy" type="Node3D" parent="." groups=["figure"]]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.2, 0, 0.6)
+
+[node name="Body" type="MeshInstance3D" parent="Guy"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7, 0)
+mesh = SubResource("CBody")
+
+[node name="head" type="MeshInstance3D" parent="Guy"]
+transform = Transform3D(0.16, 0, 0, 0, 0.16, 0, 0, 0, 0.16, 0, 1.54, 0)
+mesh = SubResource("SHead")
+
+[node name="AnimationPlayer" type="AnimationPlayer" parent="."]
+libraries = {
+&"": SubResource("Lib")
+}
+autoplay = "walk"
