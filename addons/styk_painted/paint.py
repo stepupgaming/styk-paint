@@ -147,11 +147,38 @@ FLIP = 60.0           # degrees: a surface whose hue the painting turns further 
                       # a bare wall); H3 greys and darkens surfaces, but keeps their hue
 TRIES = 3             # seeds tried per view before it is dropped (its surfaces take the other views' paint)
 
-# Asked as a material change on a flat-coloured frame, H3 keeps every outline within a few pixels; asked to "repaint"
-# the frame, it redraws shapes (a cabinet, a sign's edge) and the projection cannot follow.
-PROMPT = """Subject definition: <Picture 1> is a frame from a 3D cartoon film: {note}, drawn with flat colours and black outlines, with no people.
-Preserved: the camera, framing, perspective and every object's outline, position and size are fully preserved; every sign, poster, paper and all lettering are fully preserved exactly as they are; every surface keeps its base color; lamps and glowing panels stay lit.
-Changed: every surface gains {style}.{carry} Same soft lighting, black outlines stay, no people, no new objects, no extra text."""
+# Written to MiniMax's own H3 edit guide (the minimax-h3-image skill's edit-guide.md): one paragraph with no headings,
+# <Subject N> defined only from what <Picture 1> shows, "partially preserved" saying what remains and what changes, the
+# final state described, the format named. Asked as a material change on a flat-coloured frame, H3 keeps every outline
+# within a few pixels; asked to "repaint" the frame, it redraws shapes and the projection cannot follow.
+# --note names the place and its light, nothing more: objects a note names that a view does not show are added to it
+# (a dealer's lot grew a row of shops), and light words for another time of day leak (a "night stays dark" clause turned
+# a daylit lot into a night street), so a night place's note says its own light. Each view then says how its camera
+# looks (viewpoint(): top-down close-ups of a desk were read as walls and a room built round them) and what it shows,
+# from its ids pass (contents(): a large surface left unnamed, a lawn, was painted as something else). Day 5's 8 views
+# that the old prompt dropped (none of 24 tries kept) each pass with this one.
+PROMPT = ("<Picture 1> is a frame from a {format} 3D cartoon film set in {note}, drawn with flat colours and black "
+          "outlines. {view}{fills} Everything shown in <Picture 1> is <Subject 1>. Every sign, poster, paper and piece "
+          "of lettering in <Picture 1> is <Subject 2>. The target image is the same frame with hand-painted surface "
+          "detail on every surface. <Subject 1> is partially preserved; the camera angle, framing and perspective, every "
+          "object's outline, position, size and base colour, the black outlines, the soft shading, and the picture's "
+          "overall brightness and colour of light remain, while every surface gains {style}.{carry} <Subject 2> is fully "
+          "preserved. The frame contains no people, and no objects, signs or lettering other than those in <Picture 1>.")
+TOPDOWN = 60.0     # degrees below level: a view looking down this steeply is told so (viewpoint()), and, drawn at its
+TOPDOWN_PULL = 1.0  # own framing, drawn from this far back instead (m; draw()): close up H3 cannot tell a table top from
+                    # a wall, a metre back it sees the table's edge and the floor
+FEW = 0.03         # contents(): a piece of the set showing on less of the view than this is not named
+MAXNAMED = 6       # contents(): at most this many pieces named, the largest first
+# names the dress library's props go by (StykDress, the interior and outdoor sets) that do not read as English as they
+# stand; a made prop's name is its "about" up to its first ":" or ","
+NAMES = {"picket": "a picket fence", "potted": "a potted plant", "lamp_post": "a street lamp", "pine": "pine trees",
+         "tree": "trees", "bush": "bushes", "rock": "rocks", "frame": "a framed picture", "pendant": "a pendant lamp",
+         "drum": "an oil drum", "drums": "oil drums", "hydrant": "a fire hydrant", "extinguisher": "a fire extinguisher",
+         "jar_shelf": "a shelf of jars", "goods_shelf": "a shelf of goods", "desk_things": "small things on a desk",
+         "board": "a notice board", "photo_wall": "photographs on a wall", "till": "a cash register",
+         "cones": "traffic cones", "tripod_camera": "a camera on a tripod", "laundry": "laundry on a line",
+         "coupe": "a coupe car", "printed": "a printed sheet"}
+MASS = {"grass", "sand", "water", "gravel", "dirt", "ground", "laundry", "concrete", "mud", "snow", "wainscot"}
 
 STYLE = ("rich hand-painted material detail in a polished 3D animated film style: visible wood grain, knots and worn edges "
          "on wood, faint plaster texture and soft grime on walls, scuffs and dents on metal, paper and fabric texture, fine "
@@ -159,6 +186,120 @@ STYLE = ("rich hand-painted material detail in a polished 3D animated film style
 
 CARRY = (" Surfaces that already look painted keep exactly the paint they have; the plain flat surfaces are painted to "
          "match them.")
+
+
+def pitch(v):
+    """degrees a view's camera looks below level (its basis is stored x, y, z axes in turn and it looks down -z)"""
+    return float(np.degrees(np.arcsin(np.clip(v["basis"][7], -1.0, 1.0))))
+
+
+def shape_of(size):
+    """the format H3 is told: "vertical 9:16" for 864x1536"""
+    w, h = (int(x) for x in size.lower().split("x"))
+    for a, b in ((9, 16), (2, 3), (3, 4), (1, 1)):
+        for x, y, word in ((a, b, "vertical"), (b, a, "horizontal")):
+            if abs(w / h - x / y) < 0.02:
+                return "square 1:1" if x == y else "%s %d:%d" % (word, x, y)
+    return "%s %d:%d" % ("vertical" if h > w else "horizontal", w, h)
+
+
+def abouts(scene):
+    """a StykStudio scene.json's made props by name: what each is, its "about" up to the first ":" or ","""
+    if tscn(scene):
+        return {}
+    made = json.load(open(scene, encoding="utf-8")).get("made", {})
+    return {k: re.split(r"[:,]", m["about"])[0].strip() for k, m in made.items() if m.get("about")}
+
+
+def thing(name, about):
+    """a set piece's name (StykPainted.name_of) as English: a 1961 wooden TV console cabinet, oil drums, grass"""
+    if name in about:
+        return about[name]
+    if name in NAMES:
+        return NAMES[name]
+    t = name.replace("_", " ").strip()
+    words = t.split()
+    if words[0] in ("a", "an", "the", "two", "some") or words[-1] in MASS or (t.endswith("s") and not t.endswith("ss")):
+        return t
+    return ("an " if t[0] in "aeiou" else "a ") + t
+
+
+def contents(vdir, v, about):
+    """what a view shows, from its ids pass (film.gd / capture.gd: r the number of the named piece of the set each pixel
+    shows, g 2 where one is named; views.json's "names" says whose number is whose): [(name, share of the view,
+    (x, y) its middle, (w, h) its extent, both in parts of the view's width and height)], the largest first, at most
+    MAXNAMED of those on FEW of the view or more"""
+    im = cv2.imread(os.path.join(vdir, v["ids"]), cv2.IMREAD_UNCHANGED) if v.get("ids") else None
+    if im is None:
+        return []
+    ids = np.where(np.abs(im[..., 1] - 2.0) < 0.1, np.round(im[..., 2]), 0).astype(np.int32)
+    h, w = ids.shape
+    got = {}
+    for i, n in zip(*np.unique(ids, return_counts=True)):
+        name = v.get("names", {}).get(str(i))
+        if i and name:
+            ys, xs = np.nonzero(ids == i)
+            got.setdefault(thing(name, about), []).append((n, xs, ys))
+    out = []
+    for name, parts in got.items():   # two pieces with one English name are one thing
+        n = sum(p[0] for p in parts)
+        if n < FEW * ids.size:
+            continue
+        xs, ys = np.concatenate([p[1] for p in parts]), np.concatenate([p[2] for p in parts])
+        (x0, x1), (y0, y1) = np.percentile(xs, (5, 95)) / w, np.percentile(ys, (5, 95)) / h
+        out.append((name, n / ids.size, ((x0 + x1) / 2, (y0 + y1) / 2), (x1 - x0, y1 - y0)))
+    return sorted(out, key=lambda c: -c[1])[:MAXNAMED]
+
+
+def where(mid, ext):
+    """where in the frame a piece of the set is, from its middle and extent"""
+    x, y = mid
+    v = "top" if y < 0.33 else "bottom" if y > 0.67 else "middle"
+    hz = "left" if x < 0.33 else "right" if x > 0.67 else ""
+    if ext[0] > 0.75 and ext[1] > 0.75:
+        return "across the frame"
+    if ext[0] > 0.7:
+        return "across the %s" % v
+    if ext[1] > 0.7:
+        return "down the %s" % (hz + " side" if hz else "middle")
+    if v == "middle":
+        return "on the %s" % hz if hz else "in the middle"
+    return "at the %s%s" % (v, " " + hz if hz else "")
+
+
+def fills(items, top):
+    """one sentence on what a view shows and where (contents()); empty when nothing in it is named"""
+    if not items:
+        return ""
+    parts = []
+    for i, (name, share, mid, ext) in enumerate(items):
+        if i == 0 and share >= 0.25:
+            parts.append("%s filling %s of the frame" % (name, "most" if share >= 0.5 else "much"))
+        else:
+            parts.append("%s %s" % (name, where(mid, ext)))
+    said = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+    return " %s<Picture 1> shows %s." % ("Seen from above, " if top else "", said)
+
+
+def viewpoint(v, items):
+    """one sentence on how a view's camera looks at the set, from its pitch"""
+    p = pitch(v)
+    if p >= TOPDOWN:
+        upright = any(w in c[0] for c in items
+                      for w in ("wall", "wainscot", "ceiling", "sky", "hills", "skyline", "door", "window"))
+        return "The camera looks straight down from above%s." % (
+            "" if upright else ", so everything in the frame lies flat and is seen from above; there is no wall, "
+            "ceiling, sky or horizon in the frame")
+    if p >= 25.0:
+        return "The camera looks steeply down at the ground just in front of it."
+    return "The camera is at standing eye level."
+
+
+def prompt_for(a, vdir, v, note, carry, about):
+    """the prompt view v is painted with (PROMPT)"""
+    items = contents(vdir, v, about)
+    return PROMPT.format(format=shape_of(a.size), note=note, view=viewpoint(v, items),
+                         fills=fills(items, pitch(v) >= TOPDOWN), style=a.style, carry=carry)
 
 
 def tscn(scene):
@@ -935,6 +1076,8 @@ def plan(out, scene, every, size, overscan, have, skip):
         for v in cv:
             if v["env"] != env or vname(v) in have or vname(v) in skip or alike(v):
                 continue
+            if pitch(v) >= TOPDOWN and vname(v) + "b%g" % TOPDOWN_PULL in have:   # painted from back (draw())
+                continue
             cam = painter(v, cv2.imread(os.path.join(cand, v["depth"]), cv2.IMREAD_UNCHANGED))
             sees = [sharpness(g["P"], g["z"], g["fs"], cam) for g in fr]
             cs.append(((v["frame"], 0.0), [x > 0 for x in sees], [x >= SOFT for x in sees]))
@@ -967,14 +1110,21 @@ def plan(out, scene, every, size, overscan, have, skip):
 
 
 def paint_views(a, out, vdir, vs, places):
-    """paint the bare views vs (drawn into vdir) one after another, onto the places' paintings so far (places: env ->
-    paint.json entries). Returns (places, the names of the views painted, the views dropped)."""
+    """paint the bare views vs (drawn into vdir) one after another within each place, onto the place's paintings so far
+    (places: env -> paint.json entries). Returns (places, the names of the views painted, the views dropped).
+
+    The places take turns: each turn paints the next view of every place, so one Godot run draws all of that turn's
+    guides (a Godot start with the film loaded is about 15 s; once per turn, not once per view). A place's views carry
+    only its own earlier paintings, so the turns paint the same as one place after another."""
     said = notes(a.note)
     note = lambda env: said.get(env, said.get("", NOTE))
     cache = os.path.join(out, "painted")
     os.makedirs(cache, exist_ok=True)
     made, dropped = [], []
-    for v in vs:
+    about = abouts(a.scene)
+
+    def one(v, pre):
+        """paint view v; pre: v drawn with its place's earlier paintings on the set, or None"""
         png = os.path.join(vdir, v["image"])
         env = v["env"]
         pdir = os.path.join(out, env)
@@ -982,23 +1132,19 @@ def paint_views(a, out, vdir, vs, places):
         name = vname(v)
         guide = png
         carry = ""
-        if places.get(env) and not a.at_once:
-            # this view with the earlier paintings already on the set, so H3 carries on the same paint
-            write_place(out, env, note(env), a, places[env])
-            pre = views(a.scene, os.path.join(out, "pre"), str(v["frame"]), a.size, out, a.overscan,
-                        v.get("pull", 0.0))
-            guide = os.path.join(pre, "f%05d.png" % v["frame"])
+        if pre:   # this view with the earlier paintings already on the set, so H3 carries on the same paint
+            guide = pre
             kept = os.path.join(pdir, name + ".guide.png")
             shutil.copyfile(guide, kept)
             guide = kept
             carry = CARRY
-        prompt = PROMPT.format(note=note(env), style=a.style, carry=carry)
+        prompt = prompt_for(a, vdir, v, note(env), carry, about)
         depth = cv2.imread(os.path.join(vdir, v["depth"]), cv2.IMREAD_UNCHANGED)
         bare = cv2.imread(png)
         mp = DRAFT_MP if a.draft else PULL_MP if v.get("pull") else None
         draft = a.drafts.get(name)
         if draft:   # --final: the draft's painting painted again at full size, as the draft drew it
-            prompt = REDRAW + PROMPT.format(note=note(env), style=a.style, carry="")
+            prompt = REDRAW + prompt_for(a, vdir, v, note(env), "", about)
             dr = cv2.resize(cv2.imread(draft), (depth.shape[1], depth.shape[0]), interpolation=cv2.INTER_AREA)
         for t in range(TRIES):
             painted = paint(draft or guide, prompt, a.seed + t, a.vae, cache, mp)
@@ -1033,7 +1179,7 @@ def paint_views(a, out, vdir, vs, places):
                     os.remove(os.path.join(pdir, name + ext))
             shutil.rmtree(os.path.join(pdir, name + ".zoom"), ignore_errors=True)
             dropped.append(v)
-            continue
+            return
         kv, kd, g, shown, extra = v, vdir, cv2.imread(guide), painted, {}
         if v.get("pull"):   # kept as the close view it stands in for, sharpened
             kv, kd, g, shown, extra = zoom(a, pdir, name, v, depth, g, cv2.imread(painted), cache)
@@ -1063,23 +1209,52 @@ def paint_views(a, out, vdir, vs, places):
         print("%s %s: shapes agree %.2f, %.0f%% read directly, %.0f%% added objects left out, drift p90 %.1f px, "
               "%.1f%% kept as drawn" % (env, name, agree, st["read"] * 100, st["added"] * 100, st["flow_p90"],
                                         st["keep"] * 100), flush=True)
+
+    queues = {}
+    for v in vs:
+        queues.setdefault(v["env"], []).append(v)
+    while any(queues.values()):
+        turn = [q.pop(0) for q in queues.values() if q]
+        carried = [v for v in turn if places.get(v["env"]) and not a.at_once]
+        for v in carried:   # the paint each carried view goes on: its place's paintings so far
+            write_place(out, v["env"], note(v["env"]), a, places[v["env"]])
+        pres = {}
+        for pl in dict.fromkeys(v.get("pull", 0.0) for v in carried):   # one Godot run per distance pulled back
+            at = [v for v in carried if v.get("pull", 0.0) == pl]
+            pre = views(a.scene, os.path.join(out, "pre", "p%g" % pl), ",".join(str(v["frame"]) for v in at), a.size,
+                        out, a.overscan, pl)
+            pres |= {vname(v): os.path.join(pre, "f%05d.png" % v["frame"]) for v in at}
+        for v in turn:
+            one(v, pres.get(vname(v)))
     return places, made, dropped
 
 
 def draw(a, out, picks):
     """draw the bare views picked ((frame, pull) each) into DIR/views, named by vname(), next to the views drawn
-    before (views.json merged); returns them in the order picked"""
+    before (views.json merged); returns them in the order picked. A view picked at its own framing that looks down
+    TOPDOWN or more is drawn from TOPDOWN_PULL back instead (and kept as its own framing by zoom())."""
     vdir = os.path.join(out, "views")
     os.makedirs(vdir, exist_ok=True)
-    vs = []
-    for pl in dict.fromkeys(p for _, p in picks):
-        fs = [f for f, p in picks if p == pl]
+    vs, picks, todo = [], list(picks), list(picks)
+    while todo:
+        pl = todo[0][1]
+        fs = [f for f, p in todo if p == pl]
+        todo = [(f, p) for f, p in todo if p != pl]
         new = views(a.scene, os.path.join(out, "views-new"), ",".join(str(f) for f in fs), a.size,
                     overscan=a.overscan, pull=pl)
         for v in json.load(open(os.path.join(new, "views.json"), encoding="utf-8"))["views"]:
+            if not pl and pitch(v) >= TOPDOWN:
+                f = v["frame"]
+                if (f, TOPDOWN_PULL) in picks:
+                    picks.remove((f, pl))
+                else:
+                    picks[picks.index((f, pl))] = (f, TOPDOWN_PULL)
+                    todo.append((f, TOPDOWN_PULL))
+                    print("f%05d looks down %.0f degrees: drawn from %gm back" % (f, pitch(v), TOPDOWN_PULL), flush=True)
+                continue
             v["name"] = "f%05d" % v["frame"] + ("b%g" % pl if pl else "")
             v["pull"] = pl
-            for k in ("image", "depth", "light"):
+            for k in ("image", "depth", "light", "ids"):
                 if v.get(k) and os.path.exists(os.path.join(new, v[k])):
                     to = v["name"] + v[k][len("f%05d" % v["frame"]):]
                     os.replace(os.path.join(new, v[k]), os.path.join(vdir, to))
@@ -1117,7 +1292,7 @@ def auto(a, out):
               flush=True)
     shutil.rmtree(os.path.join(out, "pre"), ignore_errors=True)
     print("painted %s into %s from views %s" % (", ".join(places), out, have), flush=True)
-    coverage(out, a.scene, a.every, a.size)
+    return coverage(out, a.scene, a.every, a.size)
 
 
 def final(a, out):
@@ -1151,7 +1326,7 @@ def final(a, out):
         write_place(out, env, said.get(env, said.get("", NOTE)), a, entries)
     shutil.rmtree(os.path.join(out, "pre"), ignore_errors=True)
     print("painted %s again at full size from the draft: %s" % (", ".join(places), made), flush=True)
-    coverage(out, a.scene, a.every, a.size)
+    return coverage(out, a.scene, a.every, a.size)
 
 
 def camera(v, shape):
@@ -1229,18 +1404,19 @@ def main():
     if a.coverage:
         if not a.scene:
             ap.error("--coverage needs --scene")
-        coverage(out, a.scene, a.every, a.size)
-        return
+        return coverage(out, a.scene, a.every, a.size)
     if not a.scene or not a.frames:
         ap.error("--scene and --frames are needed to paint")
     if a.frames == "auto":
         return auto(a, out)
     vdir = os.path.join(out, "views")
-    if not a.keep_views:
-        views(a.scene, vdir, a.frames, a.size, overscan=a.overscan)
+    if not a.keep_views:   # as --frames auto draws them (a top-down view from TOPDOWN_PULL back)
+        shutil.rmtree(vdir, ignore_errors=True)
+        vdir, vs = draw(a, out, [(int(f), 0.0) for f in a.frames.split(",")])
     if a.views_only:
         return
-    vs = json.load(open(os.path.join(vdir, "views.json"), encoding="utf-8"))["views"]
+    if a.keep_views:
+        vs = json.load(open(os.path.join(vdir, "views.json"), encoding="utf-8"))["views"]
     if a.keep_views and all(f.strip().isdigit() for f in a.frames.split(",")):
         want = [int(f) for f in a.frames.split(",")]
         vs = sorted((v for v in vs if v["frame"] in want), key=lambda v: want.index(v["frame"]))
@@ -1253,5 +1429,46 @@ def main():
     print("painted %s into %s" % (", ".join(places), out))
 
 
+def locked():
+    """run this paint.py again under the GPU lock (godot.GPU_RUN), held for the whole run: the views, guides and paintings
+    inside it then run straight on, and H3 stays loaded from one painting to the next instead of being unloaded after
+    each (gpu_run unloads every idle ComfyUI when a job ends). None when there is no lock or this run holds it already."""
+    if not getattr(godot, "GPU_RUN", None) or os.environ.get("STUDIO_GPU_LOCK"):
+        return None
+    env = dict(os.environ, GPU_RUN_NEED_GB=os.environ.get("GPU_RUN_NEED_GB", "10"))
+    return subprocess.call([sys.executable, godot.GPU_RUN, sys.executable, os.path.abspath(__file__), *sys.argv[1:]],
+                           env=env)
+
+
+def h3_up():
+    """whether the stack engine H3 paints on (godot.H3) is running"""
+    import urllib.request
+    url = (getattr(godot, "H3", None) or {}).get("url")
+    try:
+        return bool(url) and bool(urllib.request.urlopen(url + "/queue", timeout=2).read())
+    except Exception:
+        return False
+
+
+def h3_down(was):
+    """stop the H3 engine when this run started it (was: whether it ran before), as the DLSS engine is: no model server
+    outlives the run that needed it"""
+    engine = (getattr(godot, "H3", None) or {}).get("engine")
+    if engine and STACK and not was and h3_up():
+        subprocess.run([sys.executable, "run.py", "stop", engine], cwd=STACK, stdin=subprocess.DEVNULL,
+                       stdout=subprocess.DEVNULL)
+        print("stopped %s, which this run started" % engine, flush=True)
+
+
 if __name__ == "__main__":
-    main()
+    code = locked()
+    if code is not None:
+        sys.exit(code)
+    was = h3_up()
+    try:
+        # exit 3 when the coverage report left frames that need a view (--coverage, --frames auto, --final), so a
+        # pipeline never renders a film over bare set
+        code = 3 if main() else 0
+    finally:
+        h3_down(was)
+    sys.exit(code)

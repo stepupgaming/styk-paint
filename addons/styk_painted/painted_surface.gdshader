@@ -10,6 +10,7 @@ render_mode unshaded, blend_mix, depth_draw_never, cull_back, shadows_disabled, 
 uniform sampler2D screen : hint_screen_texture, filter_linear;
 uniform float shade_from = 0.9;   // light this share of the painting camera's or more is no shadow
 uniform float shade = 0.85;       // how much of the shadow a plate takes
+uniform float plate_colour = 1.0; // a plate is at least this share of the set's colourfulness (0: as painted)
 
 varying vec3 world_pos;
 varying vec3 world_nrm;
@@ -31,9 +32,15 @@ void fragment() {
 	if (r.a <= 0.0)
 		discard;
 	vec3 c = to_linear(r.rgb);
+	// the screen holds the set as the film lights it, linear, as the light pass saw it from the painting camera
+	vec3 s = texture(screen, SCREEN_UV).rgb;
+	// the image model greys colour (a red or a teal can come back at a third to half its colour): the painting keeps
+	// its own light and hue, at least as colourful as the set it stands for
+	float lc = lum(c), ls = lum(s);
+	float cs = length(s - vec3(ls)) / max(ls, 0.01), cp = length(c - vec3(lc)) / max(lc, 0.01);
+	c = max(vec3(lc) + (c - vec3(lc)) * clamp(cs * plate_colour / max(cp, 1e-3), 1.0, 3.0), vec3(0.0));
 	if (paint_shade && bare > 0.0) {
-		// the screen holds the set as the film lights it, linear, as the light pass saw it from the painting camera
-		float k = clamp(lum(texture(screen, SCREEN_UV).rgb) / (bare * shade_from), 0.0, 1.0);
+		float k = clamp(lum(s) / (bare * shade_from), 0.0, 1.0);
 		c *= mix(1.0, k, shade);
 	}
 	ALBEDO = c;

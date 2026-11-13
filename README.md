@@ -85,11 +85,15 @@ Build a normal Godot scene, then:
   any frame renders on its own and comes out the same every time.
 - **Characters.** Put them in the group **`figure`**. Figures never get painted and are left out of the views the
   painter works from. `StykCam.figure()` finds the head (a child named `head`, whose scale is its radius) and the feet.
+- **Names.** Name the set's nodes by what they are (`Table`, `Bookshelf`, `Rug`). The painter tells H3 what each view
+  shows from those names, so the note only needs to say the place and its light. A `paint_name` meta on a node
+  overrides its name; unnamed nodes (`MeshInstance3D`, `@...`) are skipped.
 - **Things to keep.** Put signs, text, posters and pictures in the group **`paint_keep`**. They keep their own look.
 - **Lighting.** Use **Linear** tonemapping on the environment, so the paint reaches the screen as it was painted.
 - **More than one place.** If the film moves between places that should be painted separately, override `place_at(f)`
   to return each frame's place name. Then pass one note per place, for example
-  `--note "kitchen=a 1950s kitchen;yard=a back yard at dusk"`.
+  `--note "kitchen=a 1950s kitchen;yard=a back yard at dusk"`. Give each place its own light ("at night, lit by one
+  lamp"): H3 lets light words leak, so a night place says it is night and a day place says nothing about night.
 
 ### Shots
 
@@ -124,7 +128,8 @@ of a shot.
    and has its colour matched to the paint already there. The coverage report measures any visible join that is left.
 5. **Write the place.** It writes `DIR/<place>/paint.json` with every painting, depth map and camera. Then it reports
    how much of each sampled frame is unpainted, smeared, or shows a visible join between paintings. Frames over the
-   limits are marked, and their pictures go to `DIR/bare/`.
+   limits are marked, and their pictures go to `DIR/bare/`. If any frame still shows bare set, `paint.py` exits with
+   code 3, so a build script can stop before rendering.
 
 Paintings are cached, so running it again only paints what changed. Other modes:
 
@@ -143,7 +148,9 @@ Paintings are cached, so running it again only paints what changed. Other modes:
 Run `python addons/styk_painted/paint.py --help` for every option.
 
 When the film is rendered with `--paint`, the set shows the paintings. Where your lights cast a shadow that the
-painting camera didn't see, the paint darkens, so characters still cast shadows on the painted set.
+painting camera didn't see, the paint darkens, so characters still cast shadows on the painted set. H3 tends to grey
+colour, so a painting is shown at least as colourful as the set it replaces (`plate_colour` on
+`painted_surface.gdshader`; 0 shows it as painted).
 
 ## Limits
 

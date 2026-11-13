@@ -86,3 +86,48 @@ static func camera_json(xf: Transform3D, hfov: float, env: String) -> Dictionary
 	var b := xf.basis
 	return {basis = [b.x.x, b.x.y, b.x.z, b.y.x, b.y.y, b.y.z, b.z.x, b.z.y, b.z.z],
 		origin = [xf.origin.x, xf.origin.y, xf.origin.z], hfov = hfov, env = env}
+
+
+## The name paint.py gives a piece of the set in a view's contents: its own or a parent's "paint_name" meta (a built
+## set names its walls, floor, ground and scatter), else a dress prop's name (its root is dress_<prop>_<i>_<j>) or a
+## film prop's (sign_, screen_, piece_), else, with by_node_name, the first node up from it that was named by hand (a
+## plain Godot film's own names), else "".
+static func name_of(n: Node, stop: Node = null, by_node_name := false) -> String:
+	var dress := RegEx.create_from_string("^dress_(.+)_[0-9]+_[0-9]+$")
+	var prop := RegEx.create_from_string("^(sign|screen|piece)_(.+)$")
+	var made := RegEx.create_from_string("^(@|MeshInstance3D|MultiMeshInstance3D|Node3D|StaticBody3D|Sprite3D|Label3D)")
+	var hand := ""
+	var x := n
+	while x != null and x != stop:
+		if x.has_meta("paint_name"):
+			return str(x.get_meta("paint_name"))
+		var m := dress.search(x.name)
+		if m:
+			return m.get_string(1)
+		m = prop.search(x.name)   # a film's own props (StykProps): a sign, a screen, a piece
+		if m:
+			return {sign = "a sign", screen = "a TV screen"}.get(m.get_string(1), m.get_string(2))
+		if by_node_name and hand == "" and made.search(x.name) == null:
+			hand = str(x.name).to_snake_case()
+		x = x.get_parent()
+	return hand
+
+
+## Every GeometryInstance3D under root that `pick` takes, numbered by its name_of (the same name, the same number, from
+## 1): {names = {"1": name, ...}, marks = [[instance, number], ...]}. Views draw these numbers as their ids pass, for
+## paint.py to tell H3 what each view shows.
+static func number(root: Node, pick: Callable, by_node_name := false) -> Dictionary:
+	var ids := {}
+	var names := {}
+	var marks := []
+	for gi: GeometryInstance3D in root.find_children("*", "GeometryInstance3D", true, false):
+		if not pick.call(gi):
+			continue
+		var nm := name_of(gi, root, by_node_name)
+		if nm == "":
+			continue
+		if not ids.has(nm):
+			ids[nm] = ids.size() + 1
+			names[str(ids[nm])] = nm
+		marks.append([gi, ids[nm]])
+	return {names = names, marks = marks}

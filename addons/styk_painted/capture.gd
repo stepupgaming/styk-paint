@@ -8,7 +8,9 @@
 ## own light falls short of what the painting camera saw (the figures' shadows).
 ## --views: the frames as bare views of their places for paint.py: no figures, --overscan times as wide, --pull metres
 ## further back. Beside each frame's PNG go its depth and kind (f%05d.depth.exr: r inverse view depth, 0 the sky; g 0.1
-## on kept things), its light (f%05d.light.exr: the set as lit, linear) and its camera (DIR/views.json).
+## on kept things), its light (f%05d.light.exr: the set as lit, linear), its ids (f%05d.ids.exr: r the number of the
+## named piece of the set each pixel shows, g 2 where one is; StykPainted.name_of, the nodes' own names here) and its
+## camera (DIR/views.json, with the names).
 ## --info: the film's length and shots as JSON, for paint.py's choice of frames to judge.
 extends SceneTree
 
@@ -195,6 +197,14 @@ func _views(out: String, todo: Array[int]) -> void:
 	var keep := ShaderMaterial.new()
 	keep.shader = DATA
 	keep.set_shader_parameter("keep", true)
+	# the set's named pieces (by StykPainted.name_of, node names too), drawn by number as each view's ids pass
+	var ids := StykPainted.number(film, func(gi: GeometryInstance3D) -> bool: return not _in(gi, "figure"), true)
+	var id_mats := {}
+	for m: Array in ids.marks:
+		if not id_mats.has(m[1]):
+			id_mats[m[1]] = ShaderMaterial.new()
+			id_mats[m[1]].shader = DATA
+			id_mats[m[1]].set_shader_parameter("pid", float(m[1]))
 	for f in todo:
 		film.place(f)
 		var cam := film.camera
@@ -230,6 +240,13 @@ func _views(out: String, todo: Array[int]) -> void:
 		var d := await _draw(dvp)
 		d.convert(Image.FORMAT_RGBAF)
 		d.save_exr(out.path_join("f%05d.depth.exr" % f))
+		for gi in was:   # the ids pass: r the number of the named piece each pixel shows, g 2 where one is
+			gi.material_override = data
+		for m: Array in ids.marks:
+			(m[0] as GeometryInstance3D).material_override = id_mats[m[1]]
+		var di := await _draw(dvp)
+		di.convert(Image.FORMAT_RGBAF)
+		di.save_exr(out.path_join("f%05d.ids.exr" % f))
 		for gi in was:
 			gi.material_override = was[gi]
 		dvp.render_target_update_mode = SubViewport.UPDATE_DISABLED
@@ -237,7 +254,7 @@ func _views(out: String, todo: Array[int]) -> void:
 			fig.visible = shown[fig]
 		var c := StykPainted.camera_json(xf, fov, film.place_at(f))
 		c.merge({frame = f, image = "f%05d.png" % f, depth = "f%05d.depth.exr" % f, light = "f%05d.light.exr" % f,
-			w = w, h = h})
+			ids = "f%05d.ids.exr" % f, names = ids.names, w = w, h = h})
 		cams.append(c)
 	var fa := FileAccess.open(out.path_join("views.json"), FileAccess.WRITE)
 	fa.store_string(JSON.stringify({views = cams}, "	"))
